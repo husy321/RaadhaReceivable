@@ -1,8 +1,12 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { getReceivables } from "@/lib/data-services"
+import { checkDatabaseConnection } from "@/lib/database-check"
 import { mockReceivables } from "@/lib/mock-data"
+import type { ReceivableWithCustomer } from "@/lib/data-services"
 import { 
   Plus,
   Search,
@@ -10,11 +14,43 @@ import {
   Phone,
   Mail,
   FileText,
-  MoreHorizontal
+  MoreHorizontal,
+  Database as DatabaseIcon
 } from "lucide-react"
 import Link from "next/link"
 
 export default function ReceivablesPage() {
+  const [receivables, setReceivables] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [usingFallbackData, setUsingFallbackData] = useState(false)
+
+  useEffect(() => {
+    async function loadReceivables() {
+      try {
+        // Check database connection first
+        const dbCheck = await checkDatabaseConnection()
+        
+        if (!dbCheck.connected || !dbCheck.tablesExist) {
+          console.warn('Database not connected, using fallback data')
+          setUsingFallbackData(true)
+          setReceivables(mockReceivables)
+        } else {
+          // Use real Supabase data
+          const data = await getReceivables()
+          setReceivables(data)
+          setUsingFallbackData(false)
+        }
+      } catch (error) {
+        console.error('Error loading receivables:', error)
+        setUsingFallbackData(true)
+        setReceivables(mockReceivables)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadReceivables()
+  }, [])
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -42,12 +78,26 @@ export default function ReceivablesPage() {
     return 'text-red-600'
   }
 
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Receivables</h1>
+          <p className="text-muted-foreground">Loading receivables data...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Receivables</h1>
-          <p className="text-muted-foreground">Manage and track outstanding payments</p>
+          <p className="text-muted-foreground">
+            Manage and track outstanding payments
+            {usingFallbackData && <span className="text-orange-600"> (Demo Data)</span>}
+          </p>
         </div>
         <Button>
           <Plus className="h-4 w-4 mr-2" />
@@ -91,7 +141,7 @@ export default function ReceivablesPage() {
                 </tr>
               </thead>
               <tbody>
-                {mockReceivables.map((receivable) => (
+                {receivables.map((receivable) => (
                   <tr key={receivable.id} className="border-b hover:bg-muted/50">
                     <td className="p-4">
                       <Link 
@@ -108,7 +158,7 @@ export default function ReceivablesPage() {
                       <div>
                         <div className="font-medium">{receivable.customer.name}</div>
                         <div className="text-sm text-muted-foreground">
-                          {receivable.customer.email}
+                          {receivable.customer?.email || 'No email'}
                         </div>
                       </div>
                     </td>
@@ -160,7 +210,7 @@ export default function ReceivablesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(mockReceivables.reduce((sum, r) => sum + r.balance_due, 0))}
+              {formatCurrency(receivables.reduce((sum, r) => sum + r.balance_due, 0))}
             </div>
           </CardContent>
         </Card>
@@ -172,7 +222,7 @@ export default function ReceivablesPage() {
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
               {formatCurrency(
-                mockReceivables
+                receivables
                   .filter(r => r.status === 'overdue')
                   .reduce((sum, r) => sum + r.balance_due, 0)
               )}
@@ -186,9 +236,9 @@ export default function ReceivablesPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {Math.round(
-                mockReceivables.reduce((sum, r) => sum + r.aging_days, 0) / mockReceivables.length
-              )} days
+              {receivables.length > 0 ? Math.round(
+                receivables.reduce((sum, r) => sum + r.aging_days, 0) / receivables.length
+              ) : 0} days
             </div>
           </CardContent>
         </Card>

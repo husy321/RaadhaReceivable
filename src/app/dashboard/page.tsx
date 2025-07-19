@@ -1,8 +1,13 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { getDashboardStats, mockReceivables, mockFollowUps } from "@/lib/mock-data"
+import { getDashboardStats, getTodaysFollowUps, getReceivables } from "@/lib/data-services"
+import { checkDatabaseConnection } from "@/lib/database-check"
+import { getDashboardStats as getMockStats, mockReceivables, mockFollowUps } from "@/lib/mock-data"
+import type { ReceivableWithCustomer } from "@/lib/data-services"
+import type { Database } from "@/lib/supabase-types"
 import { 
   DollarSign, 
   AlertTriangle, 
@@ -11,11 +16,83 @@ import {
   Phone,
   Mail,
   FileText,
-  Plus
+  Plus,
+  Database as DatabaseIcon,
+  ExternalLink
 } from "lucide-react"
 
+type FollowUp = Database['public']['Tables']['follow_ups']['Row']
+
 export default function DashboardPage() {
-  const stats = getDashboardStats()
+  const [stats, setStats] = useState({
+    totalOutstanding: 0,
+    overdueCount: 0,
+    collectionRate: 0,
+    upcomingFollowUps: 0,
+    agingBuckets: {
+      '0-30': 0,
+      '31-60': 0,
+      '61-90': 0,
+      '90+': 0
+    }
+  })
+  const [todaysFollowUps, setTodaysFollowUps] = useState<any[]>([])
+  const [receivables, setReceivables] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [usingFallbackData, setUsingFallbackData] = useState(false)
+  const [databaseError, setDatabaseError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function loadDashboardData() {
+      try {
+        // Check database connection first
+        const dbCheck = await checkDatabaseConnection()
+        
+        if (!dbCheck.connected || !dbCheck.tablesExist) {
+          console.warn('Database not connected, using fallback data:', dbCheck.error)
+          setUsingFallbackData(true)
+          setDatabaseError(dbCheck.error || 'Database tables not found')
+          
+          // Use mock data as fallback
+          const mockStats = getMockStats()
+          const mockTodaysFollowUps = mockFollowUps.filter(f => {
+            const today = new Date().toISOString().split('T')[0]
+            return f.scheduled_date === today && !f.completed
+          })
+          
+          setStats(mockStats)
+          setTodaysFollowUps(mockTodaysFollowUps)
+          setReceivables(mockReceivables)
+        } else {
+          // Use real Supabase data
+          const [dashboardStats, followUps, receivablesData] = await Promise.all([
+            getDashboardStats(),
+            getTodaysFollowUps(),
+            getReceivables()
+          ])
+          
+          setStats(dashboardStats)
+          setTodaysFollowUps(followUps)
+          setReceivables(receivablesData)
+          setUsingFallbackData(false)
+        }
+      } catch (error) {
+        console.error('Error loading dashboard data:', error)
+        setDatabaseError(error instanceof Error ? error.message : 'Unknown error')
+        setUsingFallbackData(true)
+        
+        // Fallback to mock data
+        const mockStats = getMockStats()
+        setStats(mockStats)
+        setTodaysFollowUps([])
+        setReceivables(mockReceivables)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadDashboardData()
+  }, [])
   
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -35,17 +112,55 @@ export default function DashboardPage() {
     { id: 4, type: 'invoice', description: 'New invoice RCP-2024-005 created', amount: 35000, time: '3 days ago' }
   ]
 
-  const todaysFollowUps = mockFollowUps.filter(f => {
-    const today = new Date().toISOString().split('T')[0]
-    return f.scheduled_date === today && !f.completed
-  })
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">Loading dashboard data...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-6">
+      {usingFallbackData && (
+        <Card className="border-orange-200 bg-orange-50">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <DatabaseIcon className="h-5 w-5 text-orange-600" />
+              <CardTitle className="text-orange-800">Database Setup Required</CardTitle>
+            </div>
+            <CardDescription className="text-orange-700">
+              {databaseError ? `Database Error: ${databaseError}` : 'Supabase database tables not found.'}
+              <br />
+              Currently showing demo data. To use real data, please run the database schema in your Supabase project.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" asChild>
+                <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Open Supabase
+                </a>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+                Retry Connection
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">Overview of your receivables and collections</p>
+          <p className="text-muted-foreground">
+            Overview of your receivables and collections
+            {usingFallbackData && <span className="text-orange-600"> (Demo Data)</span>}
+          </p>
         </div>
         <Button>
           <Plus className="h-4 w-4 mr-2" />
@@ -140,7 +255,7 @@ export default function DashboardPage() {
             <div className="space-y-4">
               {todaysFollowUps.length > 0 ? (
                 todaysFollowUps.map((followUp) => {
-                  const receivable = mockReceivables.find(r => r.id === followUp.receivable_id)
+                  const receivable = receivables.find(r => r.id === followUp.receivable_id)
                   return (
                     <div key={followUp.id} className="flex items-center justify-between p-3 border rounded-lg">
                       <div className="flex items-center space-x-3">
@@ -150,7 +265,7 @@ export default function DashboardPage() {
                           <Mail className="h-4 w-4 text-green-500" />
                         )}
                         <div>
-                          <p className="text-sm font-medium">{receivable?.customer.name}</p>
+                          <p className="text-sm font-medium">{receivable?.customer.name || 'Unknown Customer'}</p>
                           <p className="text-xs text-muted-foreground">{followUp.notes}</p>
                         </div>
                       </div>

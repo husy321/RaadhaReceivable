@@ -10,7 +10,8 @@ import {
   BarChart3,
   TrendingUp,
   Users,
-  Building
+  Building,
+  Database
 } from "lucide-react"
 
 import {
@@ -35,6 +36,11 @@ const data = {
       title: "Dashboard",
       url: "/dashboard",
       icon: Home,
+    },
+    {
+      title: "Database Setup",
+      url: "/setup",
+      icon: Database,
     },
     {
       title: "Receivables",
